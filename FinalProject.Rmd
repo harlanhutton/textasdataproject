@@ -1,0 +1,155 @@
+---
+title: "Final Project"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list = ls())
+```
+
+
+# Loading in Libraries
+
+```{r echo=TRUE}
+library(dplyr)
+library(plyr)
+library(quanteda)
+library(lubridate)
+library(quanteda.corpora)
+library(stylest)
+library(tm)
+library(stringi)
+library(ggplot2)
+library(tibble)
+library(tidytext)
+library(stringr)
+```
+
+#Cleaning Data
+
+```{r echo=TRUE}
+dataF <- read.csv("dem_cand_tweets_2019_10_02.csv")
+dataF$created_at <- as.POSIXct(strptime(dataF$created_at, "%m/%d/%Y %H:%M")) 
+dataF$created_at <- mdy(paste(month(dataF$created_at), day(dataF$created_at), year(dataF$created_at), sep = "-"))
+#removing numbers, non ASCII characters,makes everything lowercase and removes solitary letters
+dataF <- dataF[,2:7]
+dataF$text <- removeNumbers(dataF$text)
+dataF$text <- stringi::stri_trans_general(dataF$text, "latin-ascii") 
+dataF$text <- stri_trans_tolower(dataF$text, locale = NULL)
+dataF$text <- gsub(" [A-z] ", " ", dataF$text)
+dataF$text <- str_replace_all(dataF$text, pattern = 'twitter for iphone', replacement = "")
+dataF$text <- str_replace_all(dataF$text, pattern = 'https', replacement = "")
+dataF$text <- str_replace_all(dataF$text, pattern = 't.co', replacement = "")
+dataF$text <- stringr::str_replace(dataF$text, '\\@', '')
+dataF$text <- stringr::str_replace(dataF$text, '\\.', '')
+```
+
+#10 most important features for all candidates then each
+
+```{r echo=TRUE}
+text_df <- data_frame(Text =dataF$text)
+
+d <- tibble(txt = text_df$Text)
+d <- d
+d <- d%>%as.tibble %>% unnest_tokens(word, txt)%>%
+  anti_join(stop_words)
+
+
+wordcount <- count(d$word)
+wordcount <-wordcount[order(-wordcount$freq),]
+wordcount <- wordcount[1:10,]
+wordcount <-wordcount[order(-wordcount$freq),]
+plot1<-ggplot(data=wordcount, aes(x=x, y=freq)) +
+  geom_bar(stat="identity",color="red", fill="pink")
+plot1 +labs(title="Most Common Words In the Dataset",
+        x ="Words", y = "Frequency")
+```
+
+```{r echo=TRUE}
+#talk about filter
+filter <- corpus::text_filter(drop_punct = TRUE,drop=stopwords(),drop_symbol=TRUE)
+vocab_custom <- stylest_select_vocab(dataF$text,dataF$screen_name,
+                                     filter = filter, smooth = 1, nfold = 5,
+                                     cutoff_pcts = c(25, 50, 75, 99))
+vocab_subset <- stylest_terms(dataF$text, dataF$screen_name, vocab_custom$cutoff_pct_best , filter = filter)
+style_model <- stylest_fit(dataF$text,dataF$screen_name, terms = vocab_subset, filter = filter)
+authors <- unique(dataF$screen_name)
+term_usage <- style_model$rate
+print(lapply(authors, function(x) head(term_usage[x,][order(-term_usage[x,])])) %>% setNames(authors))
+```
+
+#Cosine similarity between candidates tweets
+
+```{r echo=TRUE}
+bidenData <- dataF[which(dataF$screen_name=='JoeBiden'),]
+bidenData <-paste(bidenData, collapse = " ")
+
+bernieSandersData <- dataF[which(dataF$screen_name=='BernieSanders'),]
+bernieSandersData <- str_replace_all(bernieSandersData, pattern = 'twitter for iphone', replacement = "")
+bernieSandersData <-paste(bernieSandersData, collapse = " ")
+
+ewarrenData <- dataF[which(dataF$screen_name=='ewarren'),]
+ewarrenData <-paste(ewarrenData, collapse = " ")
+
+kamalaHarris <- dataF[which(dataF$screen_name=='KamalaHarris'),]
+kamalaHarris <-paste(kamalaHarris, collapse = " ")
+
+#talk about preprocessing
+bvb <- dfm(c(bidenData, bernieSandersData,ewarrenData,kamalaHarris), remove_punct =TRUE,remove = stopwords("english"),stem = TRUE,tolower=TRUE,remove_numbers = TRUE)
+similarity_bvb <- textstat_simil(bvb, margin = "documents", method = "cosine")
+matrix <- as.matrix(similarity_bvb)
+rownames(matrix) <- c("Biden", "Bernie","Warren","Harris")
+colnames(matrix) <- c("Biden", "Bernie","Warren","Harris")
+print(matrix)
+```
+
+#Collocations For the Candidates
+```{r echo=TRUE}
+#talk about lambda
+bidencolloc <- textstat_collocations(bidenData,size=3) %>% arrange(lambda) %>% slice(1:5)
+berniecolloc <- textstat_collocations(bernieSandersData,size=3) %>% arrange(lambda) %>% slice(1:5)
+ewarrencolloc <- textstat_collocations(ewarrenData,size=3) %>% arrange(lambda) %>% slice(1:5)
+kamalacolloc <- textstat_collocations(kamalaHarris,size=3) %>% arrange(lambda) %>% slice(1:5)
+print(bidencolloc)
+print(berniecolloc)
+print(ewarrencolloc)
+print(kamalacolloc)
+```
+
+# Analyze sentiment of tweets
+
+```{r echo=TRUE}
+#talk about stemming
+
+bidenData2 <- dataF[which(dataF$screen_name=='JoeBiden'),]
+bidenVal <- dfm(bidenData2$text, dictionary = data_dictionary_LSD2015,remove_punct = TRUE, remove = stopwords("english"),stem = TRUE)
+bidenValdf <- convert(bidenVal,to="data.frame")
+bidenValdf$sentScore <- bidenValdf$posit-bidenValdf$negat
+print(sum(bidenValdf$sentScore)/nrow(bidenData2))
+
+bernieSandersData2 <- dataF[which(dataF$screen_name=='BernieSanders'),]
+bernieVal <- dfm(bernieSandersData2$text, dictionary = data_dictionary_LSD2015,remove_punct = TRUE, remove = stopwords("english"),stem = TRUE)
+bernieValdf <- convert(bernieVal,to="data.frame")
+bernieValdf$sentScore <- bernieValdf$posit-bernieValdf$negat
+print(sum(bernieValdf$sentScore)/nrow(bernieSandersData2))
+
+ewarrenData2 <- dataF[which(dataF$screen_name=='ewarren'),]
+ewarrenVal <- dfm(ewarrenData2$text, dictionary = data_dictionary_LSD2015,remove_punct = TRUE, remove = stopwords("english"),stem = TRUE)
+ewarrenValdf <- convert(ewarrenVal,to="data.frame")
+ewarrenValdf$sentScore <- ewarrenValdf$posit-ewarrenValdf$negat
+print(sum(ewarrenValdf$sentScore)/nrow(ewarrenData2))
+
+kamalaHarrisData2 <- dataF[which(dataF$screen_name=='KamalaHarris'),]
+kamalaVal <- dfm(kamalaHarrisData2$text, dictionary = data_dictionary_LSD2015,remove_punct = TRUE, remove = stopwords("english"),stem = TRUE)
+kamalaValdf <- convert(kamalaVal,to="data.frame")
+kamalaValdf$sentScore <- kamalaValdf$posit-kamalaValdf$negat
+print(sum(kamalaValdf$sentScore)/nrow(kamalaHarrisData2))
+```
+
+# Analyze sentiment of tweets over months
+
+```{r echo=TRUE}
+bidenData3 <- bidenData2 %>% group_by(month=floor_date(created_at, "month")) %>%
+   summarise(count = n())
+```
